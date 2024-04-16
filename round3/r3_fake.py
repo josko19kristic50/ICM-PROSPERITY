@@ -1,5 +1,6 @@
 import json
 import math
+import copy
 import collections
 from collections import defaultdict
 from datamodel import Listing, Observation, Order, OrderDepth, ProsperityEncoder, Symbol, Trade, TradingState
@@ -122,10 +123,10 @@ class Trader:
     cont_buy_basket_unfill = 0
     cont_sell_basket_unfill = 0
     
-    begin_diff_dip = -INF
-    begin_diff_bag = -INF
-    begin_bag_price = -INF
-    begin_dip_price = -INF
+    begin_diff_dip = -9999999
+    begin_diff_bag = -9999999
+    begin_bag_price = -9999999
+    begin_dip_price = -9999999
 
     std = 25
     basket_std = 117

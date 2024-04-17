@@ -1,5 +1,6 @@
 import json
 import math
+import pandas as pd
 import copy
 import collections
 from collections import defaultdict
@@ -140,7 +141,11 @@ class Trader:
                        "AMETHYSTS" : [10000],
                        "STARFRUIT" : [],
                        "ORCHIDS" : [],
-                       "TOTAL_VOL_ORCHIDS" : []}  # Initialize prices for each symbol
+                       "TOTAL_VOL_ORCHIDS" : [],
+                       "SPREAD" : []}  # Initialize prices for each symbol
+        
+        self.last_pos = {'STRAWBERRIES' : 0, 'CHOCOLATE' : 0, 'ROSES' : 0, 'GIFT_BASKET' : 0}
+        self.tot_vol = {'STRAWBERRIES' : 0, 'CHOCOLATE' : 0, 'ROSES' : 0, 'GIFT_BASKET' : 0}
 
 
         self.maximum_positions = {"PRODUCT1": 20, 
@@ -237,6 +242,7 @@ class Trader:
 
         orders = {'STRAWBERRIES' : [], 'CHOCOLATE': [], 'ROSES' : [], 'GIFT_BASKET' : []}
         prods = ['STRAWBERRIES', 'CHOCOLATE', 'ROSES', 'GIFT_BASKET']
+
         osell, obuy, best_sell, best_buy, worst_sell, worst_buy, mid_price, vol_buy, vol_sell = {}, {}, {}, {}, {}, {}, {}, {}, {}
 
         for p in prods: # Get prices and volumes
@@ -249,6 +255,8 @@ class Trader:
             worst_sell[p] = next(reversed(osell[p]))
             worst_buy[p] = next(reversed(obuy[p]))
 
+            self.tot_vol[p] += abs(self.position[p] - self.last_pos[p])
+
             mid_price[p] = (best_sell[p] + best_buy[p])/2
             vol_buy[p], vol_sell[p] = 0, 0
             for price, vol in obuy[p].items():
@@ -259,61 +267,77 @@ class Trader:
                 vol_sell[p] += -vol 
                 if vol_sell[p] >= self.POSITION_LIMIT[p]/10:
                     break
-                    
-        print("NOW TRADING GIFT BASKETS ")
-        ma_spread = 379.5 # Hardkodirano
+                
+        spread = mid_price['GIFT_BASKET'] - mid_price['STRAWBERRIES']*6 - mid_price['CHOCOLATE']*4 - mid_price['ROSES']
+        self.prices['SPREAD'].append(spread)
+
         basket_std = 76.4
+        ma_spread = 379.5
+        std_coeff = 0.5
+        window = 200
 
-        res_buy = mid_price['GIFT_BASKET'] - mid_price['STRAWBERRIES']*6 - mid_price['CHOCOLATE']*4 - mid_price['ROSES'] - ma_spread
-        res_sell = mid_price['GIFT_BASKET'] - mid_price['STRAWBERRIES']*6 - mid_price['CHOCOLATE']*4 - mid_price['ROSES'] - ma_spread
+        # if len(self.prices['SPREAD']) > 5:
+        #     ma_spread = pd.Series(self.prices['SPREAD']).rolling(5).mean().iloc[-1]
 
-        trade_at = self.basket_std*0.25
-        close_at = self.basket_std*(-1000)
+        # if len(self.prices['SPREAD']) > window:
+        #     ma_spread = pd.Series(self.prices['SPREAD']).rolling(window).mean().iloc[-1]
+        #     basket_std = pd.Series(self.prices['SPREAD']).rolling(window).std().iloc[-1]
+                   
+        print("NOW TRADING GIFT BASKETS ")
 
-        pb_pos = self.position['GIFT_BASKET']
-        pb_neg = self.position['GIFT_BASKET']
+        res_buy = spread - ma_spread
+        res_sell = spread - ma_spread
 
-        uku_pos = self.position['ROSES']
-        uku_neg = self.position['ROSES']
+        trade_at = basket_std*std_coeff
+
+        rem_buy = self.POSITION_LIMIT['GIFT_BASKET'] - self.position['GIFT_BASKET'] # Pozitivan broj
+        rem_sell = self.position['GIFT_BASKET'] + self.POSITION_LIMIT['GIFT_BASKET'] # Pozitivan broj
 
 
-        basket_buy_sig = 0
-        basket_sell_sig = 0
-
-        if self.position['GIFT_BASKET'] == self.POSITION_LIMIT['GIFT_BASKET']:
-            self.cont_buy_basket_unfill = 0
-        if self.position['GIFT_BASKET'] == -self.POSITION_LIMIT['GIFT_BASKET']:
-            self.cont_sell_basket_unfill = 0
-
-        do_bask = 0
         print(" $$ NOW TRADING GIFT BASKETS ")
         print(" $$ CURRENT POSITION: ", self.position['GIFT_BASKET'])
         print(" $$ SPREAD FROM MEAN (USING MID PRICES): ", res_buy)
 
+        ########### get desirable positions for components
+
+        des_pos_strawberry = -self.position['GIFT_BASKET'] * 6
+        des_pos_chocolate = -self.position['GIFT_BASKET'] * 4
+        des_pos_roses = -self.position['GIFT_BASKET']
+
+        rem_sell_straw = self.position['STRAWBERRIES'] - self.POSITION_LIMIT['STRAWBERRIES']
+        rem_buy_straw = self.POSITION_LIMIT['STRAWBERRIES'] - self.position['STRAWBERRIES']
+
+        missing_pos_strawberry = des_pos_strawberry - self.position['STRAWBERRIES']
+        missing_pos_chocolate = des_pos_chocolate - self.position['CHOCOLATE']
+        missing_pos_roses = des_pos_roses - self.position['ROSES']
+
+
+        ##################################################
+
         if res_sell > trade_at:
             print("SPREAD IS TOO BIG!! WE WILL SELL GIFT BASKETS")
-            vol = self.position['GIFT_BASKET'] + self.POSITION_LIMIT['GIFT_BASKET']
-            self.cont_buy_basket_unfill = 0 # no need to buy rn
+            vol = rem_sell
             assert(vol >= 0)
             if vol > 0:
-                do_bask = 1
-                basket_sell_sig = 1
-                orders['GIFT_BASKET'].append(Order('GIFT_BASKET', worst_buy['GIFT_BASKET'], min(round(-vol/5), -5))) 
-                print("Sell order details:", "Product: GIFT_BASKET", "Price:", worst_buy['GIFT_BASKET'], "Amount:", min(round(-vol/5), -5))
-                self.cont_sell_basket_unfill += 2
-                pb_neg -= vol
+                orders['GIFT_BASKET'].append(Order('GIFT_BASKET', worst_buy['GIFT_BASKET'], -vol)) 
+                print("Sell order details:", "Product: GIFT_BASKET", "Price:", worst_buy['GIFT_BASKET'], "Amount:", -vol)
+                orders['STRAWBERRIES'].append(Order('STRAWBERRIES', round(mid_price['STRAWBERRIES'])-1, min(vol + missing_pos_strawberry, rem_buy_straw)))
+                orders['CHOCOLATE'].append(Order('CHOCOLATE', round(mid_price['CHOCOLATE'])-1, vol + missing_pos_chocolate))
+                orders['ROSES'].append(Order('ROSES', round(mid_price['ROSES'])-1, vol + missing_pos_roses))
         elif res_buy < -trade_at:
             print("SPREAD IS TOO LOW!! WE WILL BUY GIFT BASKETS")
-            vol = self.POSITION_LIMIT['GIFT_BASKET'] - self.position['GIFT_BASKET']
-            self.cont_sell_basket_unfill = 0 # no need to sell rn
+            vol = rem_buy
             assert(vol >= 0)
             if vol > 0:
-                do_bask = 1
-                basket_buy_sig = 1
-                orders['GIFT_BASKET'].append(Order('GIFT_BASKET', worst_sell['GIFT_BASKET'], max(round(vol/5), 5)))
-                print("Sell order details:", "Product: GIFT_BASKED", "Price:", worst_sell['GIFT_BASKET'] + 2, "Amount:", max(round(vol/5), 5))
-                self.cont_buy_basket_unfill += 2
-                pb_pos += vol
+                orders['GIFT_BASKET'].append(Order('GIFT_BASKET', worst_sell['GIFT_BASKET'], vol))
+                print("Sell order details:", "Product: GIFT_BASKED", "Price:", worst_sell['GIFT_BASKET'], "Amount:", vol)
+                orders['STRAWBERRIES'].append(Order('STRAWBERRIES', round(mid_price['STRAWBERRIES'])+1, max(-vol + missing_pos_strawberry, -rem_sell_straw)))
+                orders['CHOCOLATE'].append(Order('CHOCOLATE', round(mid_price['CHOCOLATE'])+1, -vol + missing_pos_chocolate))
+                orders['ROSES'].append(Order('ROSES', round(mid_price['ROSES'])+1, -vol + missing_pos_roses))
+
+        for p in prods:
+            self.last_pos[p] = self.position[p]
+            print("TOTAL VOLUME FOR ", p, " TRADED SO FAR", self.tot_vol[p])
 
 
         return orders

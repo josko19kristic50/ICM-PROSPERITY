@@ -1,6 +1,7 @@
 import json
 import math
 import pandas as pd
+import numpy as np
 import copy
 import collections
 from collections import defaultdict
@@ -144,6 +145,11 @@ class Trader:
                        "TOTAL_VOL_ORCHIDS" : [],
                        "SPREAD" : []}  # Initialize prices for each symbol
         
+        self.spreads = {"GIFT_BASKET" : [],
+                        "STRAW_CHOCO" : [],
+                        "CHOCO_ROSE" : [],
+                        "ROSE_STRAW" : []}
+        
         self.last_pos = {'STRAWBERRIES' : 0, 'CHOCOLATE' : 0, 'ROSES' : 0, 'GIFT_BASKET' : 0}
         self.tot_vol = {'STRAWBERRIES' : 0, 'CHOCOLATE' : 0, 'ROSES' : 0, 'GIFT_BASKET' : 0}
 
@@ -243,6 +249,8 @@ class Trader:
         orders = {'STRAWBERRIES' : [], 'CHOCOLATE': [], 'ROSES' : [], 'GIFT_BASKET' : []}
         prods = ['STRAWBERRIES', 'CHOCOLATE', 'ROSES', 'GIFT_BASKET']
 
+        rem_buys, rem_sells = {}, {}
+
         osell, obuy, best_sell, best_buy, worst_sell, worst_buy, mid_price, vol_buy, vol_sell = {}, {}, {}, {}, {}, {}, {}, {}, {}
 
         for p in prods: # Get prices and volumes
@@ -256,32 +264,27 @@ class Trader:
             worst_buy[p] = next(reversed(obuy[p]))
 
             self.tot_vol[p] += abs(self.position[p] - self.last_pos[p])
-
             mid_price[p] = (best_sell[p] + best_buy[p])/2
-            vol_buy[p], vol_sell[p] = 0, 0
-            for price, vol in obuy[p].items():
-                vol_buy[p] += vol 
-                if vol_buy[p] >= self.POSITION_LIMIT[p]/10:
-                    break
-            for price, vol in osell[p].items():
-                vol_sell[p] += -vol 
-                if vol_sell[p] >= self.POSITION_LIMIT[p]/10:
-                    break
-                
-        spread = mid_price['GIFT_BASKET'] - mid_price['STRAWBERRIES']*6 - mid_price['CHOCOLATE']*4 - mid_price['ROSES']
-        self.prices['SPREAD'].append(spread)
+
+            rem_buys[p] = self.POSITION_LIMIT[p] - self.position[p]
+            rem_sells[p] = self.position[p] + self.POSITION_LIMIT[p]
+
+
+        self.spreads['GIFT_BASKET'].append(mid_price['GIFT_BASKET'] - mid_price['STRAWBERRIES']*6 - mid_price['CHOCOLATE']*4 - mid_price['ROSES'])                
+        self.spreads['STRAW_CHOCO'].append(mid_price['STRAWBERRIES'] - mid_price['CHOCOLATE'])
+        self.spreads['CHOCO_ROSE'].append(mid_price['CHOCOLATE'] - mid_price['ROSES'])
+        self.spreads['ROSE_STRAW'].append(mid_price['ROSES'] - mid_price['STRAWBERRIES'])
+
+
+        spread = self.spreads['GIFT_BASKET'][-1]
+        straw_choco_spread = pd.Series(self.spreads['STRAW_CHOCO']).rolling(10).mean().iloc[-1]
+        choco_rose_spread = pd.Series(self.spreads['CHOCO_ROSE']).rolling(10).mean().iloc[-1]
+        rose_straw_spread = pd.Series(self.spreads['ROSE_STRAW']).rolling(10).mean().iloc[-1]
+
 
         basket_std = 76.4
         ma_spread = 355
         std_coeff = 0.5
-        window = 200
-
-        # if len(self.prices['SPREAD']) > 5:
-        #     ma_spread = pd.Series(self.prices['SPREAD']).rolling(5).mean().iloc[-1]
-
-        # if len(self.prices['SPREAD']) > window:
-        #     ma_spread = pd.Series(self.prices['SPREAD']).rolling(window).mean().iloc[-1]
-        #     basket_std = pd.Series(self.prices['SPREAD']).rolling(window).std().iloc[-1]
                    
         print("NOW TRADING GIFT BASKETS ")
 
@@ -290,50 +293,181 @@ class Trader:
 
         trade_at = basket_std*std_coeff
 
-        rem_buy = self.POSITION_LIMIT['GIFT_BASKET'] - self.position['GIFT_BASKET'] # Pozitivan broj
-        rem_sell = self.position['GIFT_BASKET'] + self.POSITION_LIMIT['GIFT_BASKET'] # Pozitivan broj
-
-
         print(" $$ NOW TRADING GIFT BASKETS ")
         print(" $$ CURRENT POSITION: ", self.position['GIFT_BASKET'])
         print(" $$ SPREAD FROM MEAN (USING MID PRICES): ", res_buy)
 
         ########### get desirable positions for components
 
-        des_pos_strawberry = -self.position['GIFT_BASKET'] * 6
-        des_pos_chocolate = -self.position['GIFT_BASKET'] * 4
-        des_pos_roses = -self.position['GIFT_BASKET']
+        # des_pos_strawberry = -self.position['GIFT_BASKET'] * 6
+        # des_pos_chocolate = -self.position['GIFT_BASKET'] * 4
+        # des_pos_roses = -self.position['GIFT_BASKET']
 
-        rem_sell_straw = self.position['STRAWBERRIES'] - self.POSITION_LIMIT['STRAWBERRIES']
-        rem_buy_straw = self.POSITION_LIMIT['STRAWBERRIES'] - self.position['STRAWBERRIES']
+        # rem_sell_straw = self.position['STRAWBERRIES'] - self.POSITION_LIMIT['STRAWBERRIES']
+        # rem_buy_straw = self.POSITION_LIMIT['STRAWBERRIES'] - self.position['STRAWBERRIES']
 
-        missing_pos_strawberry = des_pos_strawberry - self.position['STRAWBERRIES']
-        missing_pos_chocolate = des_pos_chocolate - self.position['CHOCOLATE']
-        missing_pos_roses = des_pos_roses - self.position['ROSES']
+        # missing_pos_strawberry = des_pos_strawberry - self.position['STRAWBERRIES']
+        # missing_pos_chocolate = des_pos_chocolate - self.position['CHOCOLATE']
+        # missing_pos_roses = des_pos_roses - self.position['ROSES']
 
 
         ##################################################
+        ## ARBING BASKETS ##
 
         if res_sell > trade_at:
             print("SPREAD IS TOO BIG!! WE WILL SELL GIFT BASKETS")
-            vol = rem_sell
+            vol = rem_sells['GIFT_BASKET']
             assert(vol >= 0)
             if vol > 0:
                 orders['GIFT_BASKET'].append(Order('GIFT_BASKET', worst_buy['GIFT_BASKET'], -vol)) 
                 print("Sell order details:", "Product: GIFT_BASKET", "Price:", worst_buy['GIFT_BASKET'], "Amount:", -vol)
-                orders['STRAWBERRIES'].append(Order('STRAWBERRIES', round(mid_price['STRAWBERRIES'])-1, min(vol + missing_pos_strawberry, rem_buy_straw)))
-                orders['CHOCOLATE'].append(Order('CHOCOLATE', round(mid_price['CHOCOLATE'])-1, vol + missing_pos_chocolate))
-                orders['ROSES'].append(Order('ROSES', round(mid_price['ROSES'])-1, vol + missing_pos_roses))
+                # orders['STRAWBERRIES'].append(Order('STRAWBERRIES', round(mid_price['STRAWBERRIES'])-1, min(vol + missing_pos_strawberry, rem_buy_straw)))
+                # orders['CHOCOLATE'].append(Order('CHOCOLATE', round(mid_price['CHOCOLATE'])-1, vol + missing_pos_chocolate))
+                # orders['ROSES'].append(Order('ROSES', round(mid_price['ROSES'])-1, vol + missing_pos_roses))
         elif res_buy < -trade_at:
             print("SPREAD IS TOO LOW!! WE WILL BUY GIFT BASKETS")
-            vol = rem_buy
+            vol = rem_buys['GIFT_BASKET']
             assert(vol >= 0)
             if vol > 0:
                 orders['GIFT_BASKET'].append(Order('GIFT_BASKET', worst_sell['GIFT_BASKET'], vol))
                 print("Sell order details:", "Product: GIFT_BASKED", "Price:", worst_sell['GIFT_BASKET'], "Amount:", vol)
-                orders['STRAWBERRIES'].append(Order('STRAWBERRIES', round(mid_price['STRAWBERRIES'])+1, max(-vol + missing_pos_strawberry, -rem_sell_straw)))
-                orders['CHOCOLATE'].append(Order('CHOCOLATE', round(mid_price['CHOCOLATE'])+1, -vol + missing_pos_chocolate))
-                orders['ROSES'].append(Order('ROSES', round(mid_price['ROSES'])+1, -vol + missing_pos_roses))
+                # orders['STRAWBERRIES'].append(Order('STRAWBERRIES', round(mid_price['STRAWBERRIES'])+1, max(-vol + missing_pos_strawberry, -rem_sell_straw)))
+                # orders['CHOCOLATE'].append(Order('CHOCOLATE', round(mid_price['CHOCOLATE'])+1, -vol + missing_pos_chocolate))
+                # orders['ROSES'].append(Order('ROSES', round(mid_price['ROSES'])+1, -vol + missing_pos_roses))
+
+        ###############################################
+        ### TRADING STRAW CHOCO
+
+        window_size = 500
+        std_coeff = 2
+
+        rem_sell_cash_straw = rem_sells['STRAWBERRIES'] * worst_buy['STRAWBERRIES']
+        rem_buy_cash_straw = rem_buys['STRAWBERRIES'] * worst_sell['STRAWBERRIES']
+        rem_sell_cash_choc = rem_sells['CHOCOLATE'] * worst_buy['CHOCOLATE']
+        rem_buy_cash_choc = rem_buys['CHOCOLATE'] * worst_sell['CHOCOLATE']
+        rem_sell_cash_rose = rem_sells['ROSES'] * worst_buy['ROSES']
+        rem_buy_cash_rose = rem_buys['ROSES'] * worst_sell['ROSES']
+
+        straw_buys = 0
+        straw_sells = 0
+        choc_buys = 0
+        choc_sells = 0
+        rose_buys = 0
+        rose_sells = 0
+
+
+        if len(self.spreads['STRAW_CHOCO']) >= window_size:
+            rolling_spread = self.spreads['STRAW_CHOCO'][-window_size:]
+            rolling_mean = np.mean(rolling_spread)
+            rolling_std = np.std(rolling_spread)
+
+            if straw_choco_spread > rolling_mean + std_coeff * rolling_std:
+                max_amount = min(rem_sell_cash_straw, rem_buy_cash_choc)
+                size_straw = min(round(max_amount / worst_buy['STRAWBERRIES']), round(self.POSITION_LIMIT['STRAWBERRIES']/20))
+                size_choc = min(round(max_amount / worst_sell['CHOCOLATE']), round(self.POSITION_LIMIT['CHOCOLATE']/20))
+                # Sell signal straws buy choco
+                straw_sells += size_straw
+                choc_buys += size_choc
+                rem_sells['STRAWBERRIES'] -= size_straw
+                rem_buys['CHOCOLATE'] -= size_choc
+            elif straw_choco_spread < rolling_mean - std_coeff * rolling_std:
+                max_amount = min(rem_buy_cash_straw, rem_sell_cash_choc)
+                size_straw = min(round(max_amount / worst_sell['STRAWBERRIES']), round(self.POSITION_LIMIT['STRAWBERRIES']/20))
+                size_choc = min(round(max_amount / worst_buy['CHOCOLATE']), round(self.POSITION_LIMIT['CHOCOLATE']/20))
+                # Buy signal straws sell choco
+                straw_buys += size_straw
+                choc_sells += size_choc
+                rem_buys['STRAWBERRIES'] -= size_straw
+                rem_sells['CHOCOLATE'] -= size_choc
+
+            rem_sell_cash_straw = rem_sells['STRAWBERRIES'] * worst_buy['STRAWBERRIES']
+            rem_buy_cash_straw = rem_buys['STRAWBERRIES'] * worst_sell['STRAWBERRIES']
+            rem_sell_cash_choc = rem_sells['CHOCOLATE'] * worst_buy['CHOCOLATE']
+            rem_buy_cash_choc = rem_buys['CHOCOLATE'] * worst_sell['CHOCOLATE']
+            rem_sell_cash_rose = rem_sells['ROSES'] * worst_buy['ROSES']
+            rem_buy_cash_rose = rem_buys['ROSES'] * worst_sell['ROSES']
+
+
+        ### CHOCO ROSE
+
+        if len(self.spreads['CHOCO_ROSE']) >= window_size:
+            rolling_spread = self.spreads['CHOCO_ROSE'][-window_size:]
+            rolling_mean = np.mean(rolling_spread)
+            rolling_std = np.std(rolling_spread)
+
+            if choco_rose_spread > rolling_mean + std_coeff * rolling_std:
+                max_amount = min(rem_sell_cash_choc, rem_buy_cash_rose)
+                size_choc = min(round(max_amount / worst_buy['CHOCOLATE']), round(self.POSITION_LIMIT['CHOCOLATE']/20))
+                size_rose = min(round(max_amount / worst_sell['ROSES']), round(self.POSITION_LIMIT['ROSES']/20))
+                # Sell signal straws buy choco
+                choc_sells += size_choc
+                rose_buys += size_rose
+                rem_sells['CHOCOLATE'] -= size_choc
+                rem_buys['ROSES'] -= size_rose
+            elif straw_choco_spread < rolling_mean - std_coeff * rolling_std:
+                max_amount = min(rem_buy_cash_choc, rem_sell_cash_rose)
+                size_choc = min(round(max_amount / worst_sell['CHOCOLATE']), round(self.POSITION_LIMIT['CHOCOLATE']/20))
+                size_rose = min(round(max_amount / worst_buy['ROSES']), round(self.POSITION_LIMIT['ROSES']/20))
+                # Buy signal straws sell choco
+                choc_buys += size_choc
+                rose_sells += size_rose
+                rem_buys['CHOCOLATE'] -= size_choc
+                rem_sells['ROSES'] -= size_rose
+
+            rem_sell_cash_straw = rem_sells['STRAWBERRIES'] * worst_buy['STRAWBERRIES']
+            rem_buy_cash_straw = rem_buys['STRAWBERRIES'] * worst_sell['STRAWBERRIES']
+            rem_sell_cash_choc = rem_sells['CHOCOLATE'] * worst_buy['CHOCOLATE']
+            rem_buy_cash_choc = rem_buys['CHOCOLATE'] * worst_sell['CHOCOLATE']
+            rem_sell_cash_rose = rem_sells['ROSES'] * worst_buy['ROSES']
+            rem_buy_cash_rose = rem_buys['ROSES'] * worst_sell['ROSES']
+
+
+        ### ROSE STRAW
+
+        if len(self.spreads['ROSE_STRAW']) >= window_size:
+            rolling_spread = self.spreads['ROSE_STRAW'][-window_size:]
+            rolling_mean = np.mean(rolling_spread)
+            rolling_std = np.std(rolling_spread)
+
+            if rose_straw_spread > rolling_mean + std_coeff * rolling_std:
+                max_amount = min(rem_sell_cash_rose, rem_buy_cash_straw)
+                size_rose = min(round(max_amount / worst_buy['ROSES']), round(self.POSITION_LIMIT['ROSES']/20))
+                size_straw = min(round(max_amount / worst_sell['STRAWBERRIES']), round(self.POSITION_LIMIT['STRAWBERRIES']/20))
+                # Sell signal straws buy choco
+                rose_sells += size_rose
+                straw_buys += size_straw
+                rem_sells['ROSES'] -= size_rose
+                rem_buys['STRAWBERRIES'] -= size_straw
+            elif rose_straw_spread < rolling_mean - std_coeff * rolling_std:
+                max_amount = min(rem_buy_cash_rose, rem_sell_cash_straw)
+                size_rose = min(round(max_amount / worst_sell['ROSES']), round(self.POSITION_LIMIT['ROSES']/20))
+                size_straw = min(round(max_amount / worst_buy['STRAWBERRIES']), round(self.POSITION_LIMIT['STRAWBERRIES']/20))
+                # Buy signal straws sell choco
+                rose_buys += size_rose
+                straw_sells += size_straw
+                rem_buys['ROSES'] -= size_rose
+                rem_sells['STRAWBERRIES'] -= size_straw
+
+        ############################################################
+        if straw_buys > straw_sells:
+            orders['STRAWBERRIES'].append(Order('STRAWBERRIES', worst_sell['STRAWBERRIES'], straw_buys-straw_sells))
+        elif straw_sells > straw_buys:
+            orders['STRAWBERRIES'].append(Order('STRAWBERRIES', worst_buy['STRAWBERRIES'], straw_buys-straw_sells))
+
+        if choc_buys > choc_sells:
+            orders['CHOCOLATE'].append(Order('CHOCOLATE', worst_sell['CHOCOLATE'], choc_buys-choc_sells))
+        elif choc_sells > choc_buys:
+            orders['CHOCOLATE'].append(Order('CHOCOLATE', worst_buy['CHOCOLATE'], choc_buys-choc_sells))
+
+        if rose_buys > rose_sells:
+            orders['ROSES'].append(Order('ROSES', worst_sell['ROSES'], rose_buys-rose_sells))
+        elif rose_sells > rose_buys:
+            orders['ROSES'].append(Order('ROSES', worst_buy['ROSES'], rose_buys-rose_sells))
+
+        ############################################################
+
+
+
 
         for p in prods:
             self.last_pos[p] = self.position[p]

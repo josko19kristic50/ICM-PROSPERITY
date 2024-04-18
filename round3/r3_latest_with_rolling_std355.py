@@ -1,6 +1,7 @@
 import json
 import math
 import pandas as pd
+import numpy as np
 import copy
 import collections
 from collections import defaultdict
@@ -273,8 +274,15 @@ class Trader:
 
         basket_std = 76.4
         ma_spread = 355
-        std_coeff = 0.5
-        window = 200
+        std_coeff = 1.5
+        window = 1000
+
+        spread_values = self.prices['SPREAD'].copy()
+        spread_values_mean_adjusted = spread_values - np.mean(spread_values) + ma_spread
+
+        if len(spread_values) > window:
+            basket_std = np.std(spread_values_mean_adjusted[-window:])
+
 
         # if len(self.prices['SPREAD']) > 5:
         #     ma_spread = pd.Series(self.prices['SPREAD']).rolling(5).mean().iloc[-1]

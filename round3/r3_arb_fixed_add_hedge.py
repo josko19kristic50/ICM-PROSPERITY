@@ -123,17 +123,6 @@ class Trader:
                         'ORCHIDS' : 100, 
                         'GIFT_BASKET' : 60, 'STRAWBERRIES' : 350, 'CHOCOLATE' : 250, 'ROSES' : 60}
 
-    cont_buy_basket_unfill = 0
-    cont_sell_basket_unfill = 0
-    
-    begin_diff_dip = -9999999
-    begin_diff_bag = -9999999
-    begin_bag_price = -9999999
-    begin_dip_price = -9999999
-
-    std = 25
-    basket_std = 70
-
     
     def __init__(self):
         self.prices = {"PRODUCT1": [9], 
@@ -157,6 +146,11 @@ class Trader:
                                   "STRAWBERRIES" : 350,
                                   "CHOCOLATE" : 250,
                                   "ROSES" : 60}  # Maximum positions for each symbol
+
+        self.ratios = { "STRAWBERRIES" : [],
+                       "CHOCOLATE" : [],
+                       "ROSES" : []
+        }
                                   
         self.bids = {"PRODUCT1": [], 
                           "PRODUCT2": [],
@@ -259,35 +253,58 @@ class Trader:
 
             mid_price[p] = (best_sell[p] + best_buy[p])/2
             vol_buy[p], vol_sell[p] = 0, 0
-            for price, vol in obuy[p].items():
-                vol_buy[p] += vol 
-                if vol_buy[p] >= self.POSITION_LIMIT[p]/10:
-                    break
-            for price, vol in osell[p].items():
-                vol_sell[p] += -vol 
-                if vol_sell[p] >= self.POSITION_LIMIT[p]/10:
-                    break
                 
         spread = mid_price['GIFT_BASKET'] - mid_price['STRAWBERRIES']*6 - mid_price['CHOCOLATE']*4 - mid_price['ROSES']
         self.prices['SPREAD'].append(spread)
 
-        basket_std = 76.4
-        ma_spread = 379.5
+        offset_for_ratio = 355
+
+        self.ratios['STRAWBERRIES'].append(mid_price['STRAWBERRIES']*6/(mid_price['GIFT_BASKET']-offset_for_ratio))
+        self.ratios['CHOCOLATE'].append(mid_price['CHOCOLATE']*4/(mid_price['GIFT_BASKET']-offset_for_ratio))
+        self.ratios['ROSES'].append(mid_price['ROSES']*1/(mid_price['GIFT_BASKET']-offset_for_ratio))
+
+
+
+        basket_std = 76.424
+        ma_spread = 355
         std_coeff = 0.5
         window = 200
 
-        # if len(self.prices['SPREAD']) > 5:
-        #     ma_spread = pd.Series(self.prices['SPREAD']).rolling(5).mean().iloc[-1]
+        # Fixed means experimentally
+        straw_ratio_mean = 0.34171
+        straw_ratio_std = 0.00266
+        choc_ratio_mean = 0.44776
+        choc_ratio_std = 0.00235
+        rose_ratio_mean = 0.20516
+        rose_ratio_std = 0.00121
 
-        # if len(self.prices['SPREAD']) > window:
-        #     ma_spread = pd.Series(self.prices['SPREAD']).rolling(window).mean().iloc[-1]
-        #     basket_std = pd.Series(self.prices['SPREAD']).rolling(window).std().iloc[-1]
+        # Fixed means from start
+        # straw_ratio_mean = 4000*6/71000
+        # straw_ratio_std = 0.00266
+        # choc_ratio_mean = 8000*4/71000
+        # choc_ratio_std = 0.00235
+        # rose_ratio_mean = 15000/71000
+        # rose_ratio_std = 0.00121
+
+        # Rolling means
+
+        # Rolling stds
+
+        buy_straw_signal = 1 if self.ratios['STRAWBERRIES'][-1] < straw_ratio_mean - std_coeff*straw_ratio_std else 0
+        buy_choc_signal = 1 if self.ratios['CHOCOLATE'][-1] < choc_ratio_mean - std_coeff*choc_ratio_std else 0
+        buy_rose_signal = 1 if self.ratios['ROSES'][-1] < rose_ratio_mean - std_coeff*rose_ratio_std else 0
+
+        sell_straw_signal = 1 if self.ratios['STRAWBERRIES'][-1] > straw_ratio_mean - std_coeff*straw_ratio_std else 0
+        sell_choc_signal = 1 if self.ratios['CHOCOLATE'][-1] > choc_ratio_mean - std_coeff*choc_ratio_std else 0
+        sell_rose_signal = 1 if self.ratios['ROSES'][-1] > rose_ratio_mean - std_coeff*rose_ratio_std else 0
+
                    
         print("NOW TRADING GIFT BASKETS ")
 
         res_buy = spread - ma_spread
         res_sell = spread - ma_spread
 
+        std_coeff = 0.5
         trade_at = basket_std*std_coeff
 
         rem_buy = self.POSITION_LIMIT['GIFT_BASKET'] - self.position['GIFT_BASKET'] # Pozitivan broj
@@ -321,9 +338,9 @@ class Trader:
             if vol > 0:
                 orders['GIFT_BASKET'].append(Order('GIFT_BASKET', worst_buy['GIFT_BASKET'], -vol)) 
                 print("Sell order details:", "Product: GIFT_BASKET", "Price:", worst_buy['GIFT_BASKET'], "Amount:", -vol)
-                orders['STRAWBERRIES'].append(Order('STRAWBERRIES', round(mid_price['STRAWBERRIES'])-1, min(vol + missing_pos_strawberry, rem_buy_straw)))
-                orders['CHOCOLATE'].append(Order('CHOCOLATE', round(mid_price['CHOCOLATE'])-1, vol + missing_pos_chocolate))
-                orders['ROSES'].append(Order('ROSES', round(mid_price['ROSES'])-1, vol + missing_pos_roses))
+                orders['STRAWBERRIES'].append(Order('STRAWBERRIES', worst_sell['STRAWBERRIES'], min(vol*6 + missing_pos_strawberry, rem_buy_straw)))
+                orders['CHOCOLATE'].append(Order('CHOCOLATE', worst_sell['CHOCOLATE'], vol*4 + missing_pos_chocolate))
+                orders['ROSES'].append(Order('ROSES', worst_sell['ROSES'], vol + missing_pos_roses))
         elif res_buy < -trade_at:
             print("SPREAD IS TOO LOW!! WE WILL BUY GIFT BASKETS")
             vol = rem_buy
@@ -331,9 +348,9 @@ class Trader:
             if vol > 0:
                 orders['GIFT_BASKET'].append(Order('GIFT_BASKET', worst_sell['GIFT_BASKET'], vol))
                 print("Sell order details:", "Product: GIFT_BASKED", "Price:", worst_sell['GIFT_BASKET'], "Amount:", vol)
-                orders['STRAWBERRIES'].append(Order('STRAWBERRIES', round(mid_price['STRAWBERRIES'])+1, max(-vol + missing_pos_strawberry, -rem_sell_straw)))
-                orders['CHOCOLATE'].append(Order('CHOCOLATE', round(mid_price['CHOCOLATE'])+1, -vol + missing_pos_chocolate))
-                orders['ROSES'].append(Order('ROSES', round(mid_price['ROSES'])+1, -vol + missing_pos_roses))
+                orders['STRAWBERRIES'].append(Order('STRAWBERRIES', worst_buy['STRAWBERRIES'], max(-vol*6 + missing_pos_strawberry, -rem_sell_straw)))
+                orders['CHOCOLATE'].append(Order('CHOCOLATE', worst_buy['CHOCOLATE'], -vol*4 + missing_pos_chocolate))
+                orders['ROSES'].append(Order('ROSES', worst_buy['ROSES'], -vol + missing_pos_roses))
 
         for p in prods:
             self.last_pos[p] = self.position[p]
@@ -353,123 +370,123 @@ class Trader:
 
         result = {}
         
-        # ords = self.compute_orders_basket(state.order_depths, state.position)
-        # result['GIFT_BASKET'] = ords['GIFT_BASKET']
-        # result['STRAWBERRIES'] = ords['STRAWBERRIES']
-        # result['CHOCOLATE'] = ords['CHOCOLATE']
-        # result['ROSES'] = ords['ROSES']
+        ords = self.compute_orders_basket(state.order_depths, state.position)
+        result['GIFT_BASKET'] = ords['GIFT_BASKET']
+        result['STRAWBERRIES'] = ords['STRAWBERRIES']
+        result['CHOCOLATE'] = ords['CHOCOLATE']
+        result['ROSES'] = ords['ROSES']
         
-        for product in ["ORCHIDS"]:
-            product_orders = []
-            order_depth = state.order_depths[product]
+        # for product in ["ORCHIDS"]:
+        #     product_orders = []
+        #     order_depth = state.order_depths[product]
             
-            sell_orders = collections.OrderedDict(sorted(order_depth.sell_orders.items(), reverse=True))
-            buy_orders = collections.OrderedDict(sorted(order_depth.buy_orders.items()))
+        #     sell_orders = collections.OrderedDict(sorted(order_depth.sell_orders.items(), reverse=True))
+        #     buy_orders = collections.OrderedDict(sorted(order_depth.buy_orders.items()))
             
-            position = state.position.get(product, 0)
-            max_position = self.maximum_positions.get(product, 0)
-            new_position = position
+        #     position = state.position.get(product, 0)
+        #     max_position = self.maximum_positions.get(product, 0)
+        #     new_position = position
             
-            rem_buy = max_position - position
-            rem_sell = max_position + position
+        #     rem_buy = max_position - position
+        #     rem_sell = max_position + position
             
-            sell_vol, best_ask = self.values_extract(sell_orders)
-            buy_vol, best_bid = self.values_extract(buy_orders, 1)
+        #     sell_vol, best_ask = self.values_extract(sell_orders)
+        #     buy_vol, best_bid = self.values_extract(buy_orders, 1)
 
-            conversion_bid = state.observations.conversionObservations[product].bidPrice
-            conversion_ask = state.observations.conversionObservations[product].askPrice
-            import_tariff = state.observations.conversionObservations[product].importTariff
-            export_tariff = state.observations.conversionObservations[product].exportTariff
-            transport_fees = state.observations.conversionObservations[product].transportFees
+        #     conversion_bid = state.observations.conversionObservations[product].bidPrice
+        #     conversion_ask = state.observations.conversionObservations[product].askPrice
+        #     import_tariff = state.observations.conversionObservations[product].importTariff
+        #     export_tariff = state.observations.conversionObservations[product].exportTariff
+        #     transport_fees = state.observations.conversionObservations[product].transportFees
             
-            ########### UPDATE HISTORY ##############################
+        #     ########### UPDATE HISTORY ##############################
             
 
-            avg_price_update = (best_ask + best_bid) / 2
-            bid_update = best_bid
-            ask_update = best_ask
+        #     avg_price_update = (best_ask + best_bid) / 2
+        #     bid_update = best_bid
+        #     ask_update = best_ask
             
-            if len(self.prices[product]) > 0:
-                # Append values to the lists
-                self.prices[product].append(avg_price_update)
-                self.bids[product].append(bid_update)
-                self.asks[product].append(ask_update)
+        #     if len(self.prices[product]) > 0:
+        #         # Append values to the lists
+        #         self.prices[product].append(avg_price_update)
+        #         self.bids[product].append(bid_update)
+        #         self.asks[product].append(ask_update)
 
-                # Remove the first element of each list
-                self.prices[product] = self.prices[product][1:]
-                self.bids[product] = self.bids[product][1:]
-                self.asks[product] = self.asks[product][1:]
-            else:
-                self.prices[product].extend([avg_price_update, avg_price_update, avg_price_update, avg_price_update, avg_price_update])
-                self.bids[product].extend([bid_update, bid_update])
-                self.asks[product].extend([ask_update, bid_update])
+        #         # Remove the first element of each list
+        #         self.prices[product] = self.prices[product][1:]
+        #         self.bids[product] = self.bids[product][1:]
+        #         self.asks[product] = self.asks[product][1:]
+        #     else:
+        #         self.prices[product].extend([avg_price_update, avg_price_update, avg_price_update, avg_price_update, avg_price_update])
+        #         self.bids[product].extend([bid_update, bid_update])
+        #         self.asks[product].extend([ask_update, bid_update])
             
-            ###########################################################
-            ###########################################################       
-            ###########################################################
+        #     ###########################################################
+        #     ###########################################################       
+        #     ###########################################################
             
-            # Calculate SMA using only the last 5 prices
-            sma = sum(self.prices[product][-5:]) / 5
-            acceptable_price = round(sma, 1)
+        #     # Calculate SMA using only the last 5 prices
+        #     sma = sum(self.prices[product][-5:]) / 5
+        #     acceptable_price = round(sma, 1)
 
-            print("####### TRADING:  ", product, "###########")
-            print(sell_orders)
-            print(buy_orders, "\n")
-            print("Highest bid: ", best_bid)
-            print("Lowest ask: ", best_ask)
-            print("Acceptable price: ", acceptable_price)
-            print("  Position:   ", position, "   ")
-            print(" $$$ Conversions are: ", conversion_bid, conversion_ask, import_tariff, export_tariff, transport_fees, " $$$ ")
+        #     print("####### TRADING:  ", product, "###########")
+        #     print(sell_orders)
+        #     print(buy_orders, "\n")
+        #     print("Highest bid: ", best_bid)
+        #     print("Lowest ask: ", best_ask)
+        #     print("Acceptable price: ", acceptable_price)
+        #     print("  Position:   ", position, "   ")
+        #     print(" $$$ Conversions are: ", conversion_bid, conversion_ask, import_tariff, export_tariff, transport_fees, " $$$ ")
             
-            buy_prize = -import_tariff - transport_fees # NEGATIVE, DOBIJAŠ ZA KUPOVINU
-            sell_cost = export_tariff + transport_fees # POSITIVE , PLAĆAŠ ZA PRODAJU
+        #     buy_prize = -import_tariff - transport_fees # NEGATIVE, DOBIJAŠ ZA KUPOVINU
+        #     sell_cost = export_tariff + transport_fees # POSITIVE , PLAĆAŠ ZA PRODAJU
             
-            holding_fees = 0.1
+        #     holding_fees = 0.1
 
             
-            ########################
-            ### TAKERS ORCHIDS ###     
-            ########################
+        #     ########################
+        #     ### TAKERS ORCHIDS ###     
+        #     ########################
             
-            max_size = 9999
-            max_conversion_short = 10
-            max_conversion = abs(position)
+        #     max_size = 9999
+        #     max_conversion_short = 10
+        #     max_conversion = abs(position)
             
-            ### Add costs for holding etc.... stimulate selling
+        #     ### Add costs for holding etc.... stimulate selling
             
-            # if position > -max_conversion_short:
-            #     product_orders.append(Order(product, best_bid, -position - max_conversion_short))
+        #     # if position > -max_conversion_short:
+        #     #     product_orders.append(Order(product, best_bid, -position - max_conversion_short))
                 
-            ####### MEGA ARB
+        #     ####### MEGA ARB
             
             
-            true_south_ask = conversion_ask + import_tariff + transport_fees
-            true_south_bid = conversion_bid - export_tariff - transport_fees
-            best_local_ask = best_ask
-            best_local_bid = best_bid
-            #if curr_humidity < prev_humidity and curr_humidity > 80:
+        #     true_south_ask = conversion_ask + import_tariff + transport_fees
+        #     true_south_bid = conversion_bid - export_tariff - transport_fees
+        #     best_local_ask = best_ask
+        #     best_local_bid = best_bid
+        #     #if curr_humidity < prev_humidity and curr_humidity > 80:
                         
-            self.TOTAL_VOL_ORCHIDS += abs(position - self.LAST_POSITION)
-            self.LAST_POSITION = position
+        #     self.TOTAL_VOL_ORCHIDS += abs(position - self.LAST_POSITION)
+        #     self.LAST_POSITION = position
             
-            if(true_south_ask < best_local_ask - 1):
-                print(" ARB SPOTTED SELL LOCAL BUY SOUTH ")
-            if(true_south_bid > best_local_bid + 1):
-                print(" ARB SPOTTED SELL SOUTH BUY LOCAL ")
+        #     if(true_south_ask < best_local_ask - 1):
+        #         print(" ARB SPOTTED SELL LOCAL BUY SOUTH ")
+        #     if(true_south_bid > best_local_bid + 1):
+        #         print(" ARB SPOTTED SELL SOUTH BUY LOCAL ")
 
-            if position != 0:
-                conversions = -position
-                print("Conversion details:", "Product:", product, "True south ask:", true_south_ask, "Amount:", position)
+        #     if position != 0:
+        #         conversions = -position
+        #         print("Conversion details:", "Product:", product, "True south ask:", true_south_ask, "Amount:", position)
                 
-            opt_price = max(math.ceil(true_south_ask), math.ceil(avg_price_update)-1)
+        #     opt_price = max(math.ceil(true_south_ask), math.ceil(avg_price_update)-1)
 
-            if(true_south_ask < best_local_ask):
-                product_orders.append(Order(product, opt_price , -rem_sell))
-                print("Sell order details:", "Product:", product, "Price:", opt_price, "Amount:", -rem_sell)
+        #     if(true_south_ask < best_local_ask):
+        #         product_orders.append(Order(product, opt_price , -rem_sell))
+        #         print("Sell order details:", "Product:", product, "Price:", opt_price, "Amount:", -rem_sell)
                 
                 
-            print(" &&&&&&& TOTAL ORCHIDS VOL SO FAR:" , self.TOTAL_VOL_ORCHIDS, "&&&&&&&&&")
-            result[product] = product_orders
+        #     print(" &&&&&&& TOTAL ORCHIDS VOL SO FAR:" , self.TOTAL_VOL_ORCHIDS, "&&&&&&&&&")
+        #     result[product] = product_orders
 
                 
            
@@ -543,7 +560,7 @@ class Trader:
             
 
 
-            result[product] = product_orders
+            # result[product] = product_orders
             
             
             

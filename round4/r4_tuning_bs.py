@@ -7,10 +7,12 @@ import collections
 from collections import defaultdict
 from datamodel import Listing, Observation, Order, OrderDepth, ProsperityEncoder, Symbol, Trade, TradingState
 from typing import Any, List
+import pandas as pd
 
 empty_dict = {'AMETHYSTS' : 0, 'STARFRUIT' : 0, 
               'ORCHIDS' : 0, 
-              'GIFT_BASKET' : 0, 'STRAWBERRIES' : 0, 'CHOCOLATE' : 0, 'ROSES' : 0}
+              'GIFT_BASKET' : 0, 'STRAWBERRIES' : 0, 'CHOCOLATE' : 0, 'ROSES' : 0,
+              'COCONUT' : 0, 'COCONUT_COUPON' : 0}
 
 class Logger:
     def __init__(self) -> None:
@@ -122,7 +124,8 @@ class Trader:
     position = copy.deepcopy(empty_dict)
     POSITION_LIMIT = {'AMETHYSTS' : 20, 'STARFRUIT' : 20, 
                         'ORCHIDS' : 100, 
-                        'GIFT_BASKET' : 60, 'STRAWBERRIES' : 350, 'CHOCOLATE' : 250, 'ROSES' : 60}
+                        'GIFT_BASKET' : 60, 'STRAWBERRIES' : 350, 'CHOCOLATE' : 250, 'ROSES' : 60,
+                        'COCONUT' : 300, 'COCONUT_COUPON' : 600}
 
     
     def __init__(self):
@@ -135,7 +138,9 @@ class Trader:
                        "STRAWBERRIES" : [],
                        "TOTAL_VOL_ORCHIDS" : [],
                        "SPREAD" : [],
-                       "BASKET_COMPONENTS" : []}  # Initialize prices for each symbol
+                       "BASKET_COMPONENTS" : [],
+                       "COCONUT" : [],
+                       "COCONUT_COUPON" : []}  # Initialize prices for each symbol
         
         self.spreads = {"GIFT_BASKET" : [],
                         "STRAW_CHOCO" : [],
@@ -158,7 +163,9 @@ class Trader:
                                   "GIFT_BASKET" : 60,
                                   "STRAWBERRIES" : 350,
                                   "CHOCOLATE" : 250,
-                                  "ROSES" : 60}  # Maximum positions for each symbol
+                                  "ROSES" : 60,
+                                  "COCONUT" : 300,
+                                  "COCONUT_COUPON" : 600}  # Maximum positions for each symbol
                                   
         self.bids = {"PRODUCT1": [], 
                           "PRODUCT2": [],
@@ -234,7 +241,27 @@ class Trader:
 
         return round(prediction)
         
-        
+    def cdf(self, x):
+        return (1.0 + math.erf(x / np.sqrt(2.0))) / 2.0
+    
+    def black_scholes_est(self, T, current_price, strike_price, volatility, r):
+
+        d1 = (math.log(current_price/strike_price) + (r + (volatility**2)/2)*T) / (volatility * math.sqrt(T))
+        d2 = d1 - volatility * math.sqrt(T)
+
+        call_price = current_price * self.cdf(d1) - strike_price * math.exp(-r*T) * self.cdf(d2)
+
+        return call_price
+    
+    def calc_delta(self, T, current_price, strike_price, volatility, r):
+
+        d1 = (math.log(current_price/strike_price) + (r + (volatility**2)/2)*T) / (volatility * math.sqrt(T))
+
+        delta = self.cdf(d1)
+
+        return delta
+
+
     def compute_orders_basket(self, order_depth, positions):
 
 
@@ -528,31 +555,11 @@ class Trader:
                 orders['ROSES'].append(Order('ROSES', worst_buy['ROSES'], -vol))
 
         return orders    
-
     
-    def run(self, state: TradingState) -> tuple[dict[Symbol, list[Order]], int, str]:
-        orders = {}
-        conversions = 0
-        trader_data = ""
-        
-        timestamp = state.timestamp
-
-        result = {}
-        
-        ords = self.compute_orders_basket(state.order_depths, state.position)
-        result['GIFT_BASKET'] = ords['GIFT_BASKET']
-
-        ords = self.compute_orders_roses_choc(state.order_depths, state.position)
-        result['ROSES'] = ords['ROSES']
-
-        ords = self.compute_orders_ma_choc(state.order_depths, state.position)
-        result['CHOCOLATE'] = ords['CHOCOLATE']
-
-        ords = self.compute_orders_ma_straw(state.order_depths, state.position)
-        result['STRAWBERRIES'] = ords['STRAWBERRIES']
-
-        for product in ["ORCHIDS"]:
-            product_orders = []            
+    def compute_orders_orchids(self, state):
+            
+            product_orders = {"ORCHIDS" : []}
+            product = 'ORCHIDS'         
             
             position = state.position.get(product, 0)            
 
@@ -569,318 +576,507 @@ class Trader:
             true_south_bid = conversion_bid - export_tariff - transport_fees
 
             conversions = -position
+            rem_sell = position + self.POSITION_LIMIT[product]
+            rem_buy = self.POSITION_LIMIT[product] - position
+
             qty = 100
 
-            product_orders.append(Order(product, math.floor(true_south_ask+1), -qty))
-            product_orders.append(Order(product, math.ceil(true_south_bid-1), qty))
+            product_orders[product].append(Order(product, math.floor(true_south_ask+1), max(-qty, -rem_sell)))
+            product_orders[product].append(Order(product, math.ceil(true_south_bid-1), min(qty, rem_buy)))
                 
                 
+            return product_orders, conversions
+
+    def compute_orders_amet(self, state):
+        product = "AMETHYSTS"
+        order_depth = state.order_depths[product]
+        
+        sell_orders = collections.OrderedDict(sorted(order_depth.sell_orders.items()))
+        buy_orders = collections.OrderedDict(sorted(order_depth.buy_orders.items(), reverse=True))
+        
+        product_orders = {"AMETHYSTS": []}
+        
+        sell_vol, best_sell_pr = self.values_extract(sell_orders)
+        buy_vol, best_buy_pr = self.values_extract(buy_orders, 1)
+        
+        # Define positions and maximum positions for the current symbol
+        position = state.position.get(product, 0)
+        max_position = self.maximum_positions.get(product, 0)
+        new_position = position
+        
+        rem_buy = max_position - position
+        rem_sell = position + max_position
+        
+
+        print("####### TRADING:  ", product, "###########")
+        print(order_depth.sell_orders)
+        print(order_depth.buy_orders, "\n")
+        print("Highest bid: ", best_buy_pr)
+        print("Lowest ask: ", best_sell_pr)
+        print("  Position:   ", position, "   ")
+
+        
+        ########### UPDATE HISTORY
+        
+
+        avg_price_update = (best_sell_pr + best_buy_pr) / 2
+        bid_update = best_buy_pr
+        ask_update = best_sell_pr
+        
+        if len(self.prices[product]) > 0:
+            # Append values to the lists
+            self.prices[product].append(avg_price_update)
+            self.bids[product].append(bid_update)
+            self.asks[product].append(ask_update)
+
+            # Remove the first element of each list
+            self.prices[product] = self.prices[product][1:]
+            self.bids[product] = self.bids[product][1:]
+            self.asks[product] = self.asks[product][1:]
+        else:
+            self.prices[product].extend([avg_price_update, avg_price_update, avg_price_update, avg_price_update, avg_price_update])
+            self.bids[product].extend([bid_update, bid_update])
+            self.asks[product].extend([ask_update, bid_update])
+
+                        
+        acceptable_price = 10000
+        
+        max_size = 9999
+        new_position = position
+        
+        rem_buy = max_position - position
+        rem_sell = max_position + position
+        
+        
+        
+        ########################
+        ### TAKERS AMETHYSTS ###     
+        ########################
+            
+        ###-BUYS-###
+        for ask, vol in sell_orders.items():
+            if  ask < acceptable_price and rem_buy > 0:
+                size = min(-vol, rem_buy, max_size)
+                rem_buy -= size
+                new_position += size
+                assert(size >= 0)
+                product_orders['AMETHYSTS'].append(Order(product, ask, size))
+            if (ask == acceptable_price and rem_buy > max_position):
+                size = min(-vol, rem_buy, rem_buy - max_position, max_size)
+                rem_buy -= size
+                new_position += size
+                assert(size >= 0)
+                product_orders['AMETHYSTS'].append(Order(product, ask, size))
                 
-            print(" &&&&&&& TOTAL ORCHIDS VOL SO FAR:" , self.TOTAL_VOL_ORCHIDS, "&&&&&&&&&")
-            result[product] = product_orders
+        ###-SELLS-###        
+        for bid, vol in buy_orders.items():
+            if  bid > acceptable_price and rem_sell > 0:
+                size = min(vol, rem_sell, max_size)
+                rem_sell -= size
+                new_position -= size
+                assert(size >= 0)
+                product_orders['AMETHYSTS'].append(Order(product, bid, -size))
+            if (bid == acceptable_price and rem_sell > max_position):
+                size = min(vol, rem_sell, rem_sell - max_position, max_size)
+                rem_sell -= size
+                new_position -= size
+                assert(size >= 0)
+                product_orders['AMETHYSTS'].append(Order(product, bid, -size))
+                
+        ########################
+        ### MAKERS AMETHYSTS ###
+        ########################
+        
+        ### BUY ###
+        
+        if new_position < 0 and rem_buy > 0:
+            size = min(rem_buy, max_size, -new_position)
+            rem_buy -= size
+            assert(size >= 0)
+            product_orders['AMETHYSTS'].append(Order(product, min(best_buy_pr + 1, acceptable_price - 1), size))
+
+        if new_position > 15 and rem_buy > 0:
+            size = min(rem_buy, max_size)
+            rem_buy -= size
+            assert(size >= 0)
+            product_orders['AMETHYSTS'].append(Order(product, min(best_buy_pr + 1, acceptable_price - 2), size))
+
+        if rem_buy > 0:
+            size = min(rem_buy, max_size)
+            rem_buy -= size
+            assert(size >= 0)
+            product_orders['AMETHYSTS'].append(Order(product, min(best_buy_pr + 1, acceptable_price - 1), size))
             
-            
-            
-            
-        ######################################################################################
+        ############
+        
+        ### SELL ###
+        
+        if new_position > 0 and rem_sell > 0:
+            size = min(rem_sell, max_size, new_position)
+            rem_sell -= size
+            assert(size >= 0)
+            product_orders['AMETHYSTS'].append(Order(product, max(best_sell_pr - 1, acceptable_price + 1), -size))
+
+        if new_position < -15 and rem_sell > 0:
+            size = min(rem_sell, max_size)
+            rem_sell -= size
+            assert(size >= 0)
+            product_orders['AMETHYSTS'].append(Order(product, max(best_sell_pr - 1, acceptable_price + 2), -size))
+
+        if rem_sell > 0:
+            size = min(rem_sell, max_size)
+            rem_sell -= size
+            assert(size >= 0)
+            product_orders['AMETHYSTS'].append(Order(product, max(best_sell_pr - 1, acceptable_price + 1), -size))
+
+        
+
+        return product_orders
 
 
-        for product in ["AMETHYSTS", "STARFRUIT"]:
-            order_depth = state.order_depths[product]
-            
-            sell_orders = collections.OrderedDict(sorted(order_depth.sell_orders.items()))
-            buy_orders = collections.OrderedDict(sorted(order_depth.buy_orders.items(), reverse=True))
-            
-            product_orders = []
-            
-            sell_vol, best_sell_pr = self.values_extract(sell_orders)
-            buy_vol, best_buy_pr = self.values_extract(buy_orders, 1)
-            
-            # Define positions and maximum positions for the current symbol
-            position = state.position.get(product, 0)
-            max_position = self.maximum_positions.get(product, 0)
+    def compute_orders_star(self, state):
+        product = "STARFRUIT"
+        order_depth = state.order_depths[product]
+
+        sell_orders = collections.OrderedDict(sorted(order_depth.sell_orders.items()))
+        buy_orders = collections.OrderedDict(sorted(order_depth.buy_orders.items(), reverse=True))
+
+        product_orders = {"STARFRUIT": []}
+
+        sell_vol, best_sell_pr = self.values_extract(sell_orders)
+        buy_vol, best_buy_pr = self.values_extract(buy_orders, 1)
+
+        # Define positions and maximum positions for the current symbol
+        position = state.position.get(product, 0)
+        max_position = self.maximum_positions.get(product, 0)
+        new_position = position
+
+        rem_buy = max_position - position
+        rem_sell = position + max_position
+
+
+        print("####### TRADING:  ", product, "###########")
+        print(order_depth.sell_orders)
+        print(order_depth.buy_orders, "\n")
+        print("Highest bid: ", best_buy_pr)
+        print("Lowest ask: ", best_sell_pr)
+        print("  Position:   ", position, "   ")
+
+
+        ########### UPDATE HISTORY
+
+
+        avg_price_update = (best_sell_pr + best_buy_pr) / 2
+        bid_update = best_buy_pr
+        ask_update = best_sell_pr
+
+        if len(self.prices[product]) > 0:
+            # Append values to the lists
+            self.prices[product].append(avg_price_update)
+            self.bids[product].append(bid_update)
+            self.asks[product].append(ask_update)
+
+            # Remove the first element of each list
+            self.prices[product] = self.prices[product][1:]
+            self.bids[product] = self.bids[product][1:]
+            self.asks[product] = self.asks[product][1:]
+        else:
+            self.prices[product].extend([avg_price_update, avg_price_update, avg_price_update, avg_price_update, avg_price_update])
+            self.bids[product].extend([bid_update, bid_update])
+            self.asks[product].extend([ask_update, bid_update])
+
+        ###########################################################
+        ####### STARFRUIT #########################################       
+        ###########################################################
+        print("BEFORE STARFRUIT: ", product)
+
+        if product == "STARFRUIT":
+
+            print("NOW TRADING:", product)
+
             new_position = position
             
-            rem_buy = max_position - position
-            rem_sell = position + max_position
+            mid_price_1 = self.prices[product][-1]
+            mid_price_2 = self.prices[product][-2]
+            mid_price_3 = self.prices[product][-3]
+            mid_price_4 = self.prices[product][-4]
+            mid_price_5 = self.prices[product][-5]
             
+            # Make copies of the dictionaries manually
+            sell_orders_copy = {key: value for key, value in sell_orders.items()}
+            buy_orders_copy = {key: value for key, value in buy_orders.items()}
 
-            print("####### TRADING:  ", product, "###########")
-            print(order_depth.sell_orders)
-            print(order_depth.buy_orders, "\n")
-            print("Highest bid: ", best_buy_pr)
-            print("Lowest ask: ", best_sell_pr)
-            print("  Position:   ", position, "   ")
+            # Ensure there are at least two items in sell_orders_copy
+            if len(sell_orders_copy) < 2:
+                first_sell_key, first_sell_value = next(iter(sell_orders_copy.items()))
+                sell_orders_copy[first_sell_key + 1] = 0  # Add a second item with volume 0
+
+            # Ensure there are at least two items in buy_orders_copy
+            if len(buy_orders_copy) < 2:
+                first_buy_key, first_buy_value = next(iter(buy_orders_copy.items()))
+                buy_orders_copy[first_buy_key - 1] = 0  # Add a second item with volume 0
+
+            # Now you can safely access the first and second items
+            ask_price_1, ask_volume_1 = list(sell_orders_copy.items())[0]
+            ask_price_2, ask_volume_2 = list(sell_orders_copy.items())[1]
+
+            bid_price_1, bid_volume_1 = list(buy_orders_copy.items())[0]
+            bid_price_2, bid_volume_2 = list(buy_orders_copy.items())[1]
 
             
-            ########### UPDATE HISTORY
-            
+            ask_price_1_last = self.asks[product][-2]
+            bid_price_1_last = self.bids[product][-2]
 
-            avg_price_update = (best_sell_pr + best_buy_pr) / 2
-            bid_update = best_buy_pr
-            ask_update = best_sell_pr
-            
-            if len(self.prices[product]) > 0:
-                # Append values to the lists
-                self.prices[product].append(avg_price_update)
-                self.bids[product].append(bid_update)
-                self.asks[product].append(ask_update)
 
-                # Remove the first element of each list
-                self.prices[product] = self.prices[product][1:]
-                self.bids[product] = self.bids[product][1:]
-                self.asks[product] = self.asks[product][1:]
-            else:
-                self.prices[product].extend([avg_price_update, avg_price_update, avg_price_update, avg_price_update, avg_price_update])
-                self.bids[product].extend([bid_update, bid_update])
-                self.asks[product].extend([ask_update, bid_update])
             
-            ###########################################################
-            ####### STARFRUIT #########################################       
-            ###########################################################
-           
+            acceptable_price = self.make_prediction(bid_price_1, bid_volume_1, ask_price_1, ask_volume_1,
+                                                        bid_price_2, bid_volume_2, ask_price_2, ask_volume_2,
+                                                        mid_price_3, mid_price_4, mid_price_5, 
+                                                        bid_price_1_last, ask_price_1_last)
+                        
+
+            print("Acc. price: ", acceptable_price)
             
-            if product == "STARFRUIT":
             
-                new_position = position
+            max_size = 9999
+
+            ########################
+            ### TAKERS STARFRUIT ###     
+            ########################
+            
+            ###BUY###
+            for ask, vol in sell_orders.items():
+                if  ask < acceptable_price and rem_buy > 0:
+                    size = min(-vol, rem_buy, max_size)
+                    rem_buy -= size
+                    new_position += size
+                    assert(size >= 0)
+                    product_orders['STARFRUIT'].append(Order(product, ask, size))
+                    print("Sell order details:", "Product:", product, "Price:", ask, "Amount:", size)
+                if (ask == acceptable_price and rem_buy > max_position):
+                    size = min(-vol, rem_buy, rem_buy - max_position, max_size)
+                    rem_buy -= size
+                    new_position += size
+                    assert(size >= 0)
+                    product_orders['STARFRUIT'].append(Order(product, ask, size))
+                    print("Sell order details:", "Product:", product, "Price:", ask, "Amount:", size)
                 
-                mid_price_1 = self.prices[product][-1]
-                mid_price_2 = self.prices[product][-2]
-                mid_price_3 = self.prices[product][-3]
-                mid_price_4 = self.prices[product][-4]
-                mid_price_5 = self.prices[product][-5]
-                
-                # Make copies of the dictionaries manually
-                sell_orders_copy = {key: value for key, value in sell_orders.items()}
-                buy_orders_copy = {key: value for key, value in buy_orders.items()}
-
-                # Ensure there are at least two items in sell_orders_copy
-                if len(sell_orders_copy) < 2:
-                    first_sell_key, first_sell_value = next(iter(sell_orders_copy.items()))
-                    sell_orders_copy[first_sell_key + 1] = 0  # Add a second item with volume 0
-
-                # Ensure there are at least two items in buy_orders_copy
-                if len(buy_orders_copy) < 2:
-                    first_buy_key, first_buy_value = next(iter(buy_orders_copy.items()))
-                    buy_orders_copy[first_buy_key - 1] = 0  # Add a second item with volume 0
-
-                # Now you can safely access the first and second items
-                ask_price_1, ask_volume_1 = list(sell_orders_copy.items())[0]
-                ask_price_2, ask_volume_2 = list(sell_orders_copy.items())[1]
-
-                bid_price_1, bid_volume_1 = list(buy_orders_copy.items())[0]
-                bid_price_2, bid_volume_2 = list(buy_orders_copy.items())[1]
-
-                
-                ask_price_1_last = self.asks[product][-2]
-                bid_price_1_last = self.bids[product][-2]
             
-            
-                
-                acceptable_price = self.make_prediction(bid_price_1, bid_volume_1, ask_price_1, ask_volume_1,
-                                                         bid_price_2, bid_volume_2, ask_price_2, ask_volume_2,
-                                                         mid_price_3, mid_price_4, mid_price_5, 
-                                                         bid_price_1_last, ask_price_1_last)
-                           
-
-                print("Acc. price: ", acceptable_price)
-                
-                
-                max_size = 9999
-
-                ########################
-                ### TAKERS STARFRUIT ###     
-                ########################
-                
-                ###BUY###
-                for ask, vol in sell_orders.items():
-                    if  ask < acceptable_price and rem_buy > 0:
-                        size = min(-vol, rem_buy, max_size)
-                        rem_buy -= size
-                        new_position += size
-                        assert(size >= 0)
-                        product_orders.append(Order(product, ask, size))
-                        print("Sell order details:", "Product:", product, "Price:", ask, "Amount:", size)
-                    if (ask == acceptable_price and rem_buy > max_position):
-                        size = min(-vol, rem_buy, rem_buy - max_position, max_size)
-                        rem_buy -= size
-                        new_position += size
-                        assert(size >= 0)
-                        product_orders.append(Order(product, ask, size))
-                        print("Sell order details:", "Product:", product, "Price:", ask, "Amount:", size)
+            ###SELL###
+            for bid, vol in buy_orders.items():
+                if  bid > acceptable_price and rem_sell > 0:
+                    size = min(vol, rem_sell, max_size)
+                    rem_sell -= size
+                    new_position -= size
+                    assert(size >= 0)
+                    product_orders['STARFRUIT'].append(Order(product, bid, -size))
+                    print("Sell order details:", "Product:", product, "Price:", bid, "Amount:", size)
+                if (bid == acceptable_price and rem_sell > max_position):
+                    size = min(vol, rem_sell, rem_sell - max_position, max_size)
+                    rem_sell -= size
+                    new_position -= size
+                    assert(size >= 0)
+                    product_orders['STARFRUIT'].append(Order(product, bid, -size))
+                    print("Sell order details:", "Product:", product, "Price:", bid, "Amount:", size)
                     
-                
-                ###SELL###
-                for bid, vol in buy_orders.items():
-                    if  bid > acceptable_price and rem_sell > 0:
-                        size = min(vol, rem_sell, max_size)
-                        rem_sell -= size
-                        new_position -= size
-                        assert(size >= 0)
-                        product_orders.append(Order(product, bid, -size))
-                        print("Sell order details:", "Product:", product, "Price:", bid, "Amount:", size)
-                    if (bid == acceptable_price and rem_sell > max_position):
-                        size = min(vol, rem_sell, rem_sell - max_position, max_size)
-                        rem_sell -= size
-                        new_position -= size
-                        assert(size >= 0)
-                        product_orders.append(Order(product, bid, -size))
-                        print("Sell order details:", "Product:", product, "Price:", bid, "Amount:", size)
-                        
-                        
-                ########################
-                ### MAKERS STARFRUIT ###     
-                ########################
-                
-             ### BUY ###
-             
-                if new_position < 0 and rem_buy > 0:
-                    size = min(rem_buy, max_size, -new_position)
-                    rem_buy -= size
-                    assert(size >= 0)
-                    product_orders.append(Order(product, min(best_buy_pr + 1, acceptable_price - 1), size))
-
-                if new_position > 15 and rem_buy > 0:
-                    size = min(rem_buy, max_size)
-                    rem_buy -= size
-                    assert(size >= 0)
-                    product_orders.append(Order(product, min(best_buy_pr + 1, acceptable_price - 2), size))
-
-                if rem_buy > 0:
-                    size = min(rem_buy, max_size)
-                    rem_buy -= size
-                    assert(size >= 0)
-                    product_orders.append(Order(product, min(best_buy_pr + 1, acceptable_price - 1), size))
                     
-                ############
-                
-                ### SELL ###
-                
-                if new_position > 0 and rem_sell > 0:
-                    size = min(rem_sell, max_size, new_position)
-                    rem_sell -= size
-                    assert(size >= 0)
-                    product_orders.append(Order(product, max(best_sell_pr - 1, acceptable_price + 1), -size))
-
-                if new_position < -15 and rem_sell > 0:
-                    size = min(rem_sell, max_size)
-                    rem_sell -= size
-                    assert(size >= 0)
-                    product_orders.append(Order(product, max(best_sell_pr - 1, acceptable_price + 2), -size))
-
-                if rem_sell > 0:
-                    size = min(rem_sell, max_size)
-                    rem_sell -= size
-                    assert(size >= 0)
-                    product_orders.append(Order(product, max(best_sell_pr - 1, acceptable_price + 1), -size))
+            ########################
+            ### MAKERS STARFRUIT ###     
+            ########################
             
-            ############                
-
-
-            #############################################################################
-            ########################## AMETHYSTS ########################################
-            #############################################################################
+            ### BUY ###
             
-            if product == "AMETHYSTS":
-            
-                acceptable_price = 10000
-                
-                max_size = 9999
-                new_position = position
-                
-                rem_buy = max_position - position
-                rem_sell = max_position + position
-                
-                
-                
-                ########################
-                ### TAKERS AMETHYSTS ###     
-                ########################
-                   
-                ###-BUYS-###
-                for ask, vol in sell_orders.items():
-                    if  ask < acceptable_price and rem_buy > 0:
-                        size = min(-vol, rem_buy, max_size)
-                        rem_buy -= size
-                        new_position += size
-                        assert(size >= 0)
-                        product_orders.append(Order(product, ask, size))
-                    if (ask == acceptable_price and rem_buy > max_position):
-                        size = min(-vol, rem_buy, rem_buy - max_position, max_size)
-                        rem_buy -= size
-                        new_position += size
-                        assert(size >= 0)
-                        product_orders.append(Order(product, ask, size))
-                        
-                ###-SELLS-###        
-                for bid, vol in buy_orders.items():
-                    if  bid > acceptable_price and rem_sell > 0:
-                        size = min(vol, rem_sell, max_size)
-                        rem_sell -= size
-                        new_position -= size
-                        assert(size >= 0)
-                        product_orders.append(Order(product, bid, -size))
-                    if (bid == acceptable_price and rem_sell > max_position):
-                        size = min(vol, rem_sell, rem_sell - max_position, max_size)
-                        rem_sell -= size
-                        new_position -= size
-                        assert(size >= 0)
-                        product_orders.append(Order(product, bid, -size))
-                        
-                ########################
-                ### MAKERS AMETHYSTS ###
-                ########################
-                
-             ### BUY ###
-             
-                if new_position < 0 and rem_buy > 0:
-                    size = min(rem_buy, max_size, -new_position)
-                    rem_buy -= size
-                    assert(size >= 0)
-                    product_orders.append(Order(product, min(best_buy_pr + 1, acceptable_price - 1), size))
+            if new_position < 0 and rem_buy > 0:
+                size = min(rem_buy, max_size, -new_position)
+                rem_buy -= size
+                assert(size >= 0)
+                product_orders['STARFRUIT'].append(Order(product, min(best_buy_pr + 1, acceptable_price - 1), size))
 
-                if new_position > 15 and rem_buy > 0:
-                    size = min(rem_buy, max_size)
-                    rem_buy -= size
-                    assert(size >= 0)
-                    product_orders.append(Order(product, min(best_buy_pr + 1, acceptable_price - 2), size))
+            if new_position > 15 and rem_buy > 0:
+                size = min(rem_buy, max_size)
+                rem_buy -= size
+                assert(size >= 0)
+                product_orders['STARFRUIT'].append(Order(product, min(best_buy_pr + 1, acceptable_price - 2), size))
 
-                if rem_buy > 0:
-                    size = min(rem_buy, max_size)
-                    rem_buy -= size
-                    assert(size >= 0)
-                    product_orders.append(Order(product, min(best_buy_pr + 1, acceptable_price - 1), size))
-                    
-                ############
+            if rem_buy > 0:
+                size = min(rem_buy, max_size)
+                rem_buy -= size
+                assert(size >= 0)
+                product_orders['STARFRUIT'].append(Order(product, min(best_buy_pr + 1, acceptable_price - 1), size))
                 
-                ### SELL ###
-                
-                if new_position > 0 and rem_sell > 0:
-                    size = min(rem_sell, max_size, new_position)
-                    rem_sell -= size
-                    assert(size >= 0)
-                    product_orders.append(Order(product, max(best_sell_pr - 1, acceptable_price + 1), -size))
-
-                if new_position < -15 and rem_sell > 0:
-                    size = min(rem_sell, max_size)
-                    rem_sell -= size
-                    assert(size >= 0)
-                    product_orders.append(Order(product, max(best_sell_pr - 1, acceptable_price + 2), -size))
-
-                if rem_sell > 0:
-                    size = min(rem_sell, max_size)
-                    rem_sell -= size
-                    assert(size >= 0)
-                    product_orders.append(Order(product, max(best_sell_pr - 1, acceptable_price + 1), -size))
-            
             ############
+            
+            ### SELL ###
+            
+            if new_position > 0 and rem_sell > 0:
+                size = min(rem_sell, max_size, new_position)
+                rem_sell -= size
+                assert(size >= 0)
+                product_orders['STARFRUIT'].append(Order(product, max(best_sell_pr - 1, acceptable_price + 1), -size))
 
-            #############################################################################
-            #############################################################################
-            #############################################################################
+            if new_position < -15 and rem_sell > 0:
+                size = min(rem_sell, max_size)
+                rem_sell -= size
+                assert(size >= 0)
+                product_orders['STARFRUIT'].append(Order(product, max(best_sell_pr - 1, acceptable_price + 2), -size))
+
+            if rem_sell > 0:
+                size = min(rem_sell, max_size)
+                rem_sell -= size
+                assert(size >= 0)
+                product_orders['STARFRUIT'].append(Order(product, max(best_sell_pr - 1, acceptable_price + 1), -size))
 
 
-            result[product] = product_orders
+            return product_orders
+
+    def compute_orders_coco(self, state):
+
+        orders = {'COCONUT' : [], 'COCONUT_COUPON' : []}
+        mid_price = {'COCONUT': 0, 'COCONUT_COUPON': 0}
+        prods = ['COCONUT', 'COCONUT_COUPON']
+
+        osell, obuy, best_sell, best_buy, worst_sell, worst_buy, mid_price, rem_buy, rem_sell, sorted_sells, sorted_buys = {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}
+
+        for p in prods: # Get prices and volumes
+
+            self.position[p] = state.position.get(p, 0)
+            rem_buy[p] = self.POSITION_LIMIT[p] - self.position[p] # Pozitivan broj
+            rem_sell[p] = self.position[p] + self.POSITION_LIMIT[p] # Pozitivan broj
+
+            sorted_sells[p] = sorted(state.order_depths[p].sell_orders.items())
+            sorted_buys[p] = sorted(state.order_depths[p].buy_orders.items(), reverse=True)
+
+            osell[p] = collections.OrderedDict(sorted(state.order_depths[p].sell_orders.items()))
+            obuy[p] = collections.OrderedDict(sorted(state.order_depths[p].buy_orders.items(), reverse=True))
+
+            if osell[p]:
+                best_sell[p] = next(iter(osell[p]))
+                worst_sell[p] = next(reversed(osell[p]))
+            else:
+                best_sell[p] = self.prices[p][-1]
+                worst_sell[p] = self.prices[p][-1]
+
+            if obuy[p]:
+                best_buy[p] = next(iter(obuy[p]))
+                worst_buy[p] = next(reversed(obuy[p]))
+            else:
+                best_buy[p] = self.prices[p][-1]
+                worst_buy[p] = self.prices[p][-1]
+
+            mid_price[p] = (best_sell[p] + best_buy[p])/2
+            self.prices[p].append(mid_price[p])
+
+
+        current_price_coconut = mid_price['COCONUT']
+        current_price_coupon = mid_price['COCONUT_COUPON']
+
+        ###### PARAMS #########################
+
+        day = 1 ########### FIX IN SUBMISSION!
+        time = state.timestamp
+        expiration = 250
+        trading_days = 252
+
+        T = (expiration - day + 1 - time/1000000)/trading_days
+
+        r = 0
+        sigma = 0.16000064368321845
+        # sigma = 0.16063938
+        strike_price = 10000
+
+
+        ### Params for z-score ##############
+
+        mean = 0
+        std = 13.2373
+        threshold = 0.5
+
+        #####################################
+
+        close, close_at = False, 0.1
+
+        ######################################
+
+        delta = self.calc_delta(T, current_price_coconut, strike_price, sigma, r)
+
+        ######################################
+
+        fair_price = self.black_scholes_est(T, current_price_coconut, strike_price, sigma, r)
+        max_size = 9999
+
+        
+        delta_hedge_qty = - delta * self.position['COCONUT_COUPON']
+        miss_qty = delta_hedge_qty - self.position['COCONUT']
+
+        z_score = (current_price_coupon - fair_price - mean)/std
+
+        if z_score > threshold: # Current price of coupon too big, short coupon
+            vol = -min(rem_sell['COCONUT_COUPON'], max_size)
+            if vol < 0:
+                orders['COCONUT_COUPON'].append(Order('COCONUT_COUPON', worst_buy['COCONUT_COUPON'], vol))
+        elif z_score < -threshold: # Current price of coupon too low, long coupon
+            vol = min(rem_buy['COCONUT_COUPON'], max_size)
+            if vol > 0:
+                orders['COCONUT_COUPON'].append(Order('COCONUT_COUPON', worst_sell['COCONUT_COUPON'], vol))
+        elif close and z_score < close_at and self.position['COCONUT_COUPON'] < 0:
+            vol = -self.position['COCONUT_COUPON']
+            if vol > 0:
+                orders['COCONUT_COUPON'].append(Order('COCONUT_COUPON', worst_sell['COCONUT_COUPON'], vol))
+        elif close and z_score > -close_at and self.position['COCONUT_COUPON'] > 0:
+            vol = -self.position['COCONUT_COUPON']
+            if vol < 0:
+                orders['COCONUT_COUPON'].append(Order('COCONUT_COUPON', worst_buy['COCONUT_COUPON'], vol))
+        else:
+            vol = 0
+
+        coco_size = -vol * delta + miss_qty
+        
+        if state.timestamp > 850000:
+            if coco_size > 0:
+                orders['COCONUT'].append(Order('COCONUT', worst_sell['COCONUT'], min(coco_size, rem_buy['COCONUT'])))
+                                        
+            if coco_size < 0:
+                orders['COCONUT'].append(Order('COCONUT', worst_buy['COCONUT'], max(coco_size, -rem_sell['COCONUT'])))
+
+
+
+
+        return orders
+        
+
+    def run(self, state: TradingState) -> tuple[dict[Symbol, list[Order]], int, str]:
+        orders = {}
+        conversions = 0
+        trader_data = ""
+
+        result = {}
+
+        ords = self.compute_orders_amet(state)
+        result['AMETHYSTS'] = ords['AMETHYSTS']
+
+        ords = self.compute_orders_star(state)
+        result['STARFRUIT'] = ords['STARFRUIT']
+
+        ords, conversions = self.compute_orders_orchids(state)
+        result['ORCHIDS'] = ords['ORCHIDS']
+        
+        ords = self.compute_orders_basket(state.order_depths, state.position)
+        result['GIFT_BASKET'] = ords['GIFT_BASKET']
+
+        ords = self.compute_orders_roses_choc(state.order_depths, state.position)
+        result['ROSES'] = ords['ROSES']
+
+        ords = self.compute_orders_ma_choc(state.order_depths, state.position)
+        result['CHOCOLATE'] = ords['CHOCOLATE']
+
+        ords = self.compute_orders_ma_straw(state.order_depths, state.position)
+        result['STRAWBERRIES'] = ords['STRAWBERRIES']
+
+        ords = self.compute_orders_coco(state)
+        result['COCONUT'] = ords['COCONUT']
+        result['COCONUT_COUPON'] = ords['COCONUT_COUPON']        
+            
+
 
         logger.flush(state, result, conversions, trader_data)
         return result, conversions, trader_data

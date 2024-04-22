@@ -983,7 +983,7 @@ class Trader:
 
         ###### PARAMS #########################
 
-        day = 1 ########### FIX IN SUBMISSION!
+        day = 4 ########### FIX IN SUBMISSION!
         time = state.timestamp
         expiration = 250
         trading_days = 252
@@ -1066,26 +1066,26 @@ class Trader:
 
         result = {}
 
-        ords = self.compute_orders_amet(state)
-        result['AMETHYSTS'] = ords['AMETHYSTS']
+        # ords = self.compute_orders_amet(state)
+        # result['AMETHYSTS'] = ords['AMETHYSTS']
 
-        ords = self.compute_orders_star(state)
-        result['STARFRUIT'] = ords['STARFRUIT']
+        # ords = self.compute_orders_star(state)
+        # result['STARFRUIT'] = ords['STARFRUIT']
 
-        ords, conversions = self.compute_orders_orchids(state)
-        result['ORCHIDS'] = ords['ORCHIDS']
+        # ords, conversions = self.compute_orders_orchids(state)
+        # result['ORCHIDS'] = ords['ORCHIDS']
         
-        ords = self.compute_orders_basket(state.order_depths, state.position)
-        result['GIFT_BASKET'] = ords['GIFT_BASKET']
+        # ords = self.compute_orders_basket(state.order_depths, state.position)
+        # result['GIFT_BASKET'] = ords['GIFT_BASKET']
 
-        ords = self.compute_orders_roses_choc(state.order_depths, state.position)
-        result['ROSES'] = ords['ROSES']
+        # ords = self.compute_orders_roses_choc(state.order_depths, state.position)
+        # result['ROSES'] = ords['ROSES']
 
-        ords = self.compute_orders_ma_choc(state.order_depths, state.position)
-        result['CHOCOLATE'] = ords['CHOCOLATE']
+        # ords = self.compute_orders_ma_choc(state.order_depths, state.position)
+        # result['CHOCOLATE'] = ords['CHOCOLATE']
 
-        ords = self.compute_orders_ma_straw(state.order_depths, state.position)
-        result['STRAWBERRIES'] = ords['STRAWBERRIES']
+        # ords = self.compute_orders_ma_straw(state.order_depths, state.position)
+        # result['STRAWBERRIES'] = ords['STRAWBERRIES']
 
         ords = self.compute_orders_coco(state)
         result['COCONUT'] = ords['COCONUT']

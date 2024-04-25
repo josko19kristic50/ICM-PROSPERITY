@@ -293,11 +293,19 @@ class Trader:
             osell[p] = collections.OrderedDict(sorted(order_depth[p].sell_orders.items()))
             obuy[p] = collections.OrderedDict(sorted(order_depth[p].buy_orders.items(), reverse=True))
 
-            best_sell[p] = next(iter(osell[p]))
-            best_buy[p] = next(iter(obuy[p]))
+            if osell[p]:
+                best_sell[p] = next(iter(osell[p]))
+                worst_sell[p] = next(reversed(osell[p]))
+            else:
+                best_sell[p] = self.prices[p][-1]
+                worst_sell[p] = self.prices[p][-1]
 
-            worst_sell[p] = next(reversed(osell[p]))
-            worst_buy[p] = next(reversed(obuy[p]))
+            if obuy[p]:
+                best_buy[p] = next(iter(obuy[p]))
+                worst_buy[p] = next(reversed(obuy[p]))
+            else:
+                best_buy[p] = self.prices[p][-1]
+                worst_buy[p] = self.prices[p][-1]
 
             mid_price[p] = (best_sell[p] + best_buy[p])/2
                 
@@ -366,11 +374,19 @@ class Trader:
             osell[p] = collections.OrderedDict(sorted(order_depth[p].sell_orders.items()))
             obuy[p] = collections.OrderedDict(sorted(order_depth[p].buy_orders.items(), reverse=True))
 
-            best_sell[p] = next(iter(osell[p]))
-            best_buy[p] = next(iter(obuy[p]))
+            if osell[p]:
+                best_sell[p] = next(iter(osell[p]))
+                worst_sell[p] = next(reversed(osell[p]))
+            else:
+                best_sell[p] = self.prices[p][-1]
+                worst_sell[p] = self.prices[p][-1]
 
-            worst_sell[p] = next(reversed(osell[p]))
-            worst_buy[p] = next(reversed(obuy[p]))
+            if obuy[p]:
+                best_buy[p] = next(iter(obuy[p]))
+                worst_buy[p] = next(reversed(obuy[p]))
+            else:
+                best_buy[p] = self.prices[p][-1]
+                worst_buy[p] = self.prices[p][-1]
 
             self.tot_vol[p] += abs(self.position[p] - self.last_pos[p])
             mid_price[p] = (best_sell[p] + best_buy[p])/2
@@ -442,11 +458,19 @@ class Trader:
             osell[p] = collections.OrderedDict(sorted(order_depth[p].sell_orders.items()))
             obuy[p] = collections.OrderedDict(sorted(order_depth[p].buy_orders.items(), reverse=True))
 
-            best_sell[p] = next(iter(osell[p]))
-            best_buy[p] = next(iter(obuy[p]))
+            if osell[p]:
+                best_sell[p] = next(iter(osell[p]))
+                worst_sell[p] = next(reversed(osell[p]))
+            else:
+                best_sell[p] = self.prices[p][-1]
+                worst_sell[p] = self.prices[p][-1]
 
-            worst_sell[p] = next(reversed(osell[p]))
-            worst_buy[p] = next(reversed(obuy[p]))
+            if obuy[p]:
+                best_buy[p] = next(iter(obuy[p]))
+                worst_buy[p] = next(reversed(obuy[p]))
+            else:
+                best_buy[p] = self.prices[p][-1]
+                worst_buy[p] = self.prices[p][-1]
 
             self.tot_vol[p] += abs(self.position[p] - self.last_pos[p])
             mid_price[p] = (best_sell[p] + best_buy[p])/2
@@ -503,12 +527,14 @@ class Trader:
         return orders
 
 
-    def compute_orders_roses_choc(self, order_depth, positions):
+    def compute_orders_roses_choc(self, state):
 
-        orders = {'CHOCOLATE' : [], 'ROSES' : []}
-        prods = ['CHOCOLATE', 'ROSES']
+        positions = state.position
+        order_depth = state.order_depths
 
-        self.position['CHOCOLATE'] = positions.get('CHOCOLATE', 0)
+        orders = {'ROSES' : []}
+        prods = ['ROSES']
+
         self.position['ROSES'] = positions.get('ROSES', 0)
 
         osell, obuy, best_sell, best_buy, worst_sell, worst_buy, mid_price = {}, {}, {}, {}, {}, {}, {}
@@ -516,54 +542,51 @@ class Trader:
             osell[p] = collections.OrderedDict(sorted(order_depth[p].sell_orders.items()))
             obuy[p] = collections.OrderedDict(sorted(order_depth[p].buy_orders.items(), reverse=True))
 
-            best_sell[p] = next(iter(osell[p]))
-            best_buy[p] = next(iter(obuy[p]))
+            if osell[p]:
+                best_sell[p] = next(iter(osell[p]))
+                worst_sell[p] = next(reversed(osell[p]))
+            else:
+                best_sell[p] = self.prices[p][-1]
+                worst_sell[p] = self.prices[p][-1]
 
-            worst_sell[p] = next(reversed(osell[p]))
-            worst_buy[p] = next(reversed(obuy[p]))
+            if obuy[p]:
+                best_buy[p] = next(iter(obuy[p]))
+                worst_buy[p] = next(reversed(obuy[p]))
+            else:
+                best_buy[p] = self.prices[p][-1]
+                worst_buy[p] = self.prices[p][-1]
 
             mid_price[p] = (best_sell[p] + best_buy[p])/2
 
-        coef = 15/8
-        self.spreads["ROSE_CHOC"].append(mid_price['ROSES'] - coef * mid_price['CHOCOLATE'])
 
-        #### HYPERPARAMS ##########################
-                                                ###
-        roll, window = True, 1000               ###
-        closing, close_at = True, 0             ###
-        trade_at = 2                            ###
-                                                ###
-        ###########################################
+        product = 'ROSES'
+        person = 'Rhianna'
+        coeff = 20
 
+        rem_buys = self.POSITION_LIMIT[product] - self.position[product]
+        rem_sells = self.position[product] + self.POSITION_LIMIT[product]
 
-        if roll and len(self.spreads['ROSE_CHOC']) > window:
-            rolling_spread = self.spreads['ROSE_CHOC'][-window:]
-            mean = np.mean(rolling_spread)
-            std = np.std(rolling_spread)
+        buys = 0
+        sells = 0
 
-            res = self.spreads['ROSE_CHOC'][-1]
-            z_score = (res - mean)/std
+        if product in state.market_trades:
+            market_trades = state.market_trades[product] # list of trades for roses
+            for trade in market_trades:
+                if trade.buyer == person:
+                    buys += trade.quantity
+                if trade.seller == person:
+                    sells += trade.quantity
 
-            if z_score > trade_at:
-                vol = self.position['ROSES'] + self.POSITION_LIMIT['ROSES']
-                assert(vol >= 0)
-                if vol > 0:
-                    orders['ROSES'].append(Order('ROSES', worst_buy['ROSES'], -vol))
-            elif z_score < -trade_at:
-                vol = self.POSITION_LIMIT['ROSES'] - self.position['ROSES']
-                assert(vol >= 0)
-                if vol > 0:
-                    orders['ROSES'].append(Order('ROSES', worst_sell['ROSES'], vol))
-            elif closing and z_score < close_at and self.position['ROSES'] < 0:
-                vol = -self.position['ROSES']
-                assert(vol >= 0)
-                if vol > 0:
-                    orders['ROSES'].append(Order('ROSES', worst_sell['ROSES'], vol))
-            elif closing and z_score > -close_at and self.position['ROSES'] > 0:
-                vol = self.position['ROSES']
-                assert(vol >= 0)
-                if vol > 0:
-                    orders['ROSES'].append(Order('ROSES', worst_buy['ROSES'], -vol))
+        trade = buys - sells
+
+        if trade > 0 and rem_buys > 0:
+            size = coeff * min(trade, rem_buys)
+            orders[product].append(Order(product, worst_sell[product], size))
+        
+        if trade < 0 and rem_sells > 0:
+            size = coeff * min(-trade, rem_sells)
+            orders[product].append(Order(product, worst_buy[product], -size))
+
 
         return orders    
     
@@ -1066,26 +1089,26 @@ class Trader:
 
         result = {}
 
-        # ords = self.compute_orders_amet(state)
-        # result['AMETHYSTS'] = ords['AMETHYSTS']
+        ords = self.compute_orders_amet(state)
+        result['AMETHYSTS'] = ords['AMETHYSTS']
 
-        # ords = self.compute_orders_star(state)
-        # result['STARFRUIT'] = ords['STARFRUIT']
+        ords = self.compute_orders_star(state)
+        result['STARFRUIT'] = ords['STARFRUIT']
 
-        # ords, conversions = self.compute_orders_orchids(state)
-        # result['ORCHIDS'] = ords['ORCHIDS']
+        ords, conversions = self.compute_orders_orchids(state)
+        result['ORCHIDS'] = ords['ORCHIDS']
         
-        # ords = self.compute_orders_basket(state.order_depths, state.position)
-        # result['GIFT_BASKET'] = ords['GIFT_BASKET']
+        ords = self.compute_orders_basket(state.order_depths, state.position)
+        result['GIFT_BASKET'] = ords['GIFT_BASKET']
 
-        # ords = self.compute_orders_roses_choc(state.order_depths, state.position)
-        # result['ROSES'] = ords['ROSES']
+        ords = self.compute_orders_roses_choc(state)
+        result['ROSES'] = ords['ROSES']
 
-        # ords = self.compute_orders_ma_choc(state.order_depths, state.position)
-        # result['CHOCOLATE'] = ords['CHOCOLATE']
+        ords = self.compute_orders_ma_choc(state.order_depths, state.position)
+        result['CHOCOLATE'] = ords['CHOCOLATE']
 
-        # ords = self.compute_orders_ma_straw(state.order_depths, state.position)
-        # result['STRAWBERRIES'] = ords['STRAWBERRIES']
+        ords = self.compute_orders_ma_straw(state.order_depths, state.position)
+        result['STRAWBERRIES'] = ords['STRAWBERRIES']
 
         ords = self.compute_orders_coco(state)
         result['COCONUT'] = ords['COCONUT']
